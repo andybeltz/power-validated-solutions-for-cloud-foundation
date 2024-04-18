@@ -15798,11 +15798,11 @@ Function Enable-vRLIContentPack {
     )
 
     Try {
-        Try {
-            # Attempt to decode the token. If the decoding succeeds, the token is already base64 encoded. Do nothing.
-            [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($token)) | Out-Null
-        } Catch {
-            # If the decoding fails, the token was not base64 encoded. Encode it.
+        # Attempt to decode the token
+        if ($(Try { $null = [Convert]::FromBase64String($token); $true } Catch { $false })) {
+            # Do Nothing
+        } else {
+            #Convert token to base64
             $token = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($token))
         }
 
@@ -15826,31 +15826,35 @@ Function Enable-vRLIContentPack {
                             if ($contentPack -eq 'LINUX-SYSTEMD') { $contentPackNamespace = 'com.linux.systemd' }
 
                             $index = Get-vRLIMarketplaceMetadata -index -token $token
-                            $contentPackFile = ($index | Where-Object { $_.namespace -eq $contentPackNamespace }).filename
-                            $contentPackName = ($index | Where-Object { $_.namespace -eq $contentPackNamespace }).name
-                            $contentPackVersion = ($index | Where-Object { $_.namespace -eq $contentPackNamespace }).contentVersion
+                            if (-Not ($index -match "401 (Unauthorized)")) { 
+                                $contentPackFile = ($index | Where-Object { $_.namespace -eq $contentPackNamespace }).filename
+                                $contentPackName = ($index | Where-Object { $_.namespace -eq $contentPackNamespace }).name
+                                $contentPackVersion = ($index | Where-Object { $_.namespace -eq $contentPackNamespace }).contentVersion
 
-                            if ($response = Get-vRLIMarketplaceMetadata -token $token) {
-                                $uri = ($response | Where-Object { $_.name -eq $contentPackFile }).url
-                                $response = Invoke-RestMethod -Method 'GET' -Uri $Uri -Headers $ghHeaders
-                                $json = $response | ConvertTo-Json -Depth 100 -Compress
-                            } else {
-                                Write-Warning "Retrieving content pack ($contentPackFile) metadata from the marketplace: PRE_VALIDATION_FAILED"
-                            }
-
-                            if (Get-vRLIContentPack | Where-Object { $_.name -eq $contentPackName }) {
-                                Write-Warning "Installing content pack ($contentPackName v$contentPackVersion) to VMware Aria Operations for Logs ($($vcfVrliDetails.fqdn)), already exists: SKIPPED"
-                            } else {
-                                if ($json) {
-                                    Install-vRLIContentPack -json $json | Out-Null
-                                    if ($contentPackStatus = (Get-vRLIContentPack | Where-Object { $_.name -eq $contentPackName })) {
-                                        Write-Output "Installing content pack ($contentPackName v$contentPackVersion) to VMware Aria Operations for Logs ($($vcfVrliDetails.fqdn)): SUCCESSFUL"
-                                    } else {
-                                        Write-Error "Installing content pack ($contentPackName v$contentPackVersion) to VMware Aria Operations for Logs ($($vcfVrliDetails.fqdn)): POST_VALIDATION_FAILED"
-                                    }
+                                if ($response = Get-vRLIMarketplaceMetadata -token $token) {
+                                    $uri = ($response | Where-Object { $_.name -eq $contentPackFile }).url
+                                    $response = Invoke-RestMethod -Method 'GET' -Uri $uri -Headers $ghHeaders
+                                    $json = $response | ConvertTo-Json -Depth 100 -Compress
                                 } else {
-                                    Write-Error "Installing content pack ($contentPackName v$contentPackVersion) to VMware Aria Operations for Logs ($($vcfVrliDetails.fqdn)): PRE_VALIDATION_FAILED"
+                                    Write-Warning "Retrieving content pack ($contentPackFile) metadata from the marketplace: PRE_VALIDATION_FAILED"
                                 }
+
+                                if (Get-vRLIContentPack | Where-Object { $_.name -eq $contentPackName }) {
+                                    Write-Warning "Installing content pack ($contentPackName v$contentPackVersion) to VMware Aria Operations for Logs ($($vcfVrliDetails.fqdn)), already exists: SKIPPED"
+                                } else {
+                                    if ($json) {
+                                        Install-vRLIContentPack -json $json | Out-Null
+                                        if (Get-vRLIContentPack | Where-Object { $_.name -eq $contentPackName }) {
+                                            Write-Output "Installing content pack ($contentPackName v$contentPackVersion) to VMware Aria Operations for Logs ($($vcfVrliDetails.fqdn)): SUCCESSFUL"
+                                        } else {
+                                            Write-Error "Installing content pack ($contentPackName v$contentPackVersion) to VMware Aria Operations for Logs ($($vcfVrliDetails.fqdn)): POST_VALIDATION_FAILED"
+                                        }
+                                    } else {
+                                        Write-Error "Installing content pack ($contentPackName v$contentPackVersion) to VMware Aria Operations for Logs ($($vcfVrliDetails.fqdn)): PRE_VALIDATION_FAILED"
+                                    }
+                                }
+                            } else {
+                                Write-Error "GitHub Token return error 401 (Unauthorized): PRE_VALIDATION_FAILED "
                             }
                         }
                     }
@@ -48104,7 +48108,7 @@ Function Install-vRLIContentPack {
         } else {
             $uri = "https://$vrliappliance/api/v1/content/contentpack"
         }
-        Invoke-RestMethod -Method 'POST' -Uri $Uri -ContentType 'application/octet-stream' -Headers $vrliHeaders -Body $json
+        Invoke-RestMethod -Method 'POST' -Uri $uri -ContentType 'application/octet-stream' -Headers $vrliHeaders -Body $json
     } Catch {
         Debug-ExceptionWriter -object $_
     }
